@@ -13,7 +13,7 @@ class Site:
     def __init__(
         self, 
         api: ModelAPI,
-        node_name, 
+        site_name, 
         layer: Optional[int] = None,
         head: Optional[int] = None,
         seq_pos: "SeqPos" = None,
@@ -21,7 +21,7 @@ class Site:
         self.api = api
         if layer is not None: assert layer >= 0, "Doesn't accept negative layers."
 
-        self.component_name = node_name
+        self.component_name = site_name
         self.layer = layer
 
         if head is not None: assert isinstance(head, int), f"head should be an int, not {type(head)}"
@@ -39,16 +39,16 @@ class Site:
         pass
 
     @staticmethod
-    def get_site(api, node_name, layer, head, seq_pos):
-        if node_name in ["q", "k", "v", "o"]:
-            return HeadSite(api, node_name, layer, head, seq_pos)
-        if node_name == "mlp":
+    def get_site(api, site_name, layer, head, seq_pos):
+        if site_name in ["q", "k", "v", "o"]:
+            return HeadSite(api, site_name, layer, head, seq_pos)
+        if site_name == "mlp":
             return MLPSite(api, layer, seq_pos)
-        if node_name == "resid":
+        if site_name == "resid":
             return ResidSite(api, layer, seq_pos)
-        if node_name == "attn":
+        if site_name == "attn":
             return AttnSite(api, layer, seq_pos)
-        raise ValueError(f"Unknown node name: {node_name}")
+        raise ValueError(f"Unknown node name: {site_name}")
     
     @property
     def result(self):
