@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nnpatch"
+authors = [
+    {name = "Julian Minder"},
+]
+description = "A library for acitvation patching based on NNsight"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "einops",
+    'nnsight',
+    'torch',
+    'loguru',
+    'transformers',
+]
+dynamic = ["version"]
