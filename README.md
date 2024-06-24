@@ -59,12 +59,9 @@ sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="custom_cons
 # Patch on a list of specific positions each 
 sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="custom", seq_pos=[-3,-102])
 
-out = act_patch(nnmodel, Llama3, sites, source_prompts, target_prompts, source_answer_index, target_answer_index, attention_mask=attention_mask)
-
-
-
 # Apply activation patching
-patched_outputs = act_patch(model, inputs['input_ids'], sites)
+out = act_patch(nnmodel, Llama3, sites, source_prompts, target_prompts, source_answer_index, target_answer_index, attention_mask=attention_mask)
+# out: Dict of site_name: tensor
 ```
 
 ## Do custom things
