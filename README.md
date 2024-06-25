@@ -3,7 +3,7 @@ nnpatch is a Python library designed for neural network model interpretability t
 
 The library builds on the concept of a Site. A Site is any position in a model where we can patch. This can be a specific token position, a specific head, a specific layer, multiple positions at once, a specific block (mlp, attn, resid) or any combination of those.
 
-Currenlty `mlp`, `attn` and `resid` refer to the post block activations.
+Currently `mlp`, `attn` and `resid` refer to the post block activations.
 
 # Installation
 ```
