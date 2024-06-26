@@ -6,7 +6,7 @@ import torch
 from tqdm.auto import tqdm
 from loguru import logger
 
-from nnsight.model import NNsight
+from nnsight import NNsight
 
 from .api.model_api import ModelAPI
 from .site import Site, Sites
@@ -25,15 +25,16 @@ def clean_run(nnmodel, sites_dict, clean_tokens, corrupted_tokens, attention_mas
 
         # Get logits from the lm_head.
         clean_logits = nnmodel.lm_head.output.save()
+
         # Calculate the difference between the correct answer and incorrect answer for the clean run and save it.
         clean_logit_diff = (
             clean_logits[batch_range, -1, correct_index.unsqueeze(0)] - clean_logits[batch_range, -1, incorrect_index]
         ).cpu().save()
+        
 
     # Corrupted run
     with nnmodel.trace(corrupted_tokens, attention_mask=attention_mask, scan=scan, validate=validate) as invoker:
             corrupted_logits = nnmodel.lm_head.output
-
             # Calculate the difference between the correct answer and incorrect answer for the corrupted run and save it.
             corrupted_logit_diff = (
                 corrupted_logits[batch_range, -1, correct_index]
@@ -48,8 +49,8 @@ def clean_run(nnmodel, sites_dict, clean_tokens, corrupted_tokens, attention_mas
         raise ValueError("The corrupted logit diff is not negative for all samples. The model is not confident in the inversed answer. \n" + str(corrupted_logit_diff))
     clean_logit_diff = clean_logit_diff.mean()
     corrupted_logit_diff = corrupted_logit_diff.mean()
-    logger.info("Clean logit diff: ", clean_logit_diff)
-    logger.info("Corrupted logit diff: ", corrupted_logit_diff)
+    logger.info(f"Clean logit diff: {clean_logit_diff}" )
+    logger.info(f"Corrupted logit diff: {corrupted_logit_diff}" )
     return clean_logit_diff, corrupted_logit_diff
 
 

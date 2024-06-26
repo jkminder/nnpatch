@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple, Union, Dict
 from torch import Tensor
 import torch
 
-from nnsight.model import NNsight
+from nnsight import NNsight
 
 from .api.model_api import ModelAPI
 from .utils import hidden_to_head, head_to_hidden
