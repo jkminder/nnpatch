@@ -35,7 +35,6 @@ tokenizer.padding_side = "left"
 # Prepare your data 
 # For llama3
 ASSISTANT_START = "<|start_header_id|>assistant<|end_header_id|>\n\n"
-# Prepare your data
 data = pd.DataFrame({
     "source_prompts": [tokenizer.apply_chat_template([{"role": "user", "content": "One word answers! What is the capital of France?"}], tokenize=False) + ASSISTANT_START, tokenizer.apply_chat_template([{"role": "user", "content": "One word answers! What is the capital of Italy?"}], tokenize=False) + ASSISTANT_START],
     "source_answers": ["Paris", "Rome"],
