@@ -3,7 +3,7 @@ nnpatch is a Python library designed to make neural network models interpretable
 
 The library builds on the concept of a Site. A Site is any position in a model where we can patch. This can be a specific token position, a specific head, a specific layer, multiple positions at once, a specific block (mlp, attn, resid) or any combination of those.
 
-Currenlty `mlp`, `attn` and `resid` refer to the post block activations.
+Currently `mlp`, `attn` and `resid` refer to the post block activations.
 
 There are currently two models supported:
 - Llama3 (tested with `Meta-Llama-3-8B-Instruct`)
@@ -79,7 +79,8 @@ out = act_patch(nnmodel, Llama3, sites, source_prompts, target_prompts, source_a
 # out: Dict of site_name: tensor representing the logit difference variation for each patch
 
 # Apply activation patching
-patched_outputs = act_patch(model, inputs['input_ids'], sites)
+out = act_patch(nnmodel, Llama3, sites, source_prompts, target_prompts, source_answer_index, target_answer_index, attention_mask=attention_mask)
+# out: Dict of site_name: tensor
 ```
 ### A Note on Layer and Sequence Indexing
 You can specify to only patch at specific layers or sequence positions. Check the following examples:
