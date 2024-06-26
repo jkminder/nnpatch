@@ -75,31 +75,12 @@ sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="custom_cons
 sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="custom", seq_pos=[-3,-102])
 
 
-out = act_patch(nnmodel, Llama3, sites, source_prompts, target_prompts, source_answer_index, target_answer_index, attention_mask=attention_mask)
-# out: Dict of site_name: tensor representing the logit difference variation for each patch
-
 # Apply activation patching
 out = act_patch(nnmodel, Llama3, sites, source_prompts, target_prompts, source_answer_index, target_answer_index, attention_mask=attention_mask)
-# out: Dict of site_name: tensor
+# out: Dict of site_name: tensor representing the logit difference variation for each patch
 ```
 ### A Note on Layer and Sequence Indexing
-You can specify to only patch at specific layers or sequence positions. Check the following examples:
-```python
-# We patch on layers 1 to 4, set to None to patch on all layers
-# Patch on each position
-sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="each")
-# Patch on all positions at once
-sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type=None)
-# Patch on the last token
-sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="last")
-# Patch on the last k=10 tokens
-sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="lastk", seq_pos=10)
-# Patch on a list of specific positions at once (replace all these positions in one forward pass)
-sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="custom_constant", seq_pos=[-3,-102])
-# Patch on a list of specific positions each 
-sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="custom", seq_pos=[-3,-102])
-```
-If you specify any setting where multiple token positions have to be patched individually (`custom`, `each` or `lastk`), the output from the activation patching
+You can specify to only patch at specific layers or sequence positions. Check the examples in the code above. If you specify any setting where multiple token positions have to be patched individually (`custom`, `each` or `lastk`), the output from the activation patching
 function `act_patch` will still span the full sequence length of the input and all layers, but only the specified sites are filled in. 
 
 E.g. if you specify the sites with : `sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="custom", seq_pos=[-3,-102])` and your input sequence contains 200 tokens. Your output of a `resid` patch of Llama 3 8b (which has 32 layers) will be of shape `[32, 200]` but only the layers `1,2,3,4` as well as positions `-3` and `-102` will be filled in, the rest of the output matrix is 0. 
