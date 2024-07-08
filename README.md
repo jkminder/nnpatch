@@ -22,6 +22,7 @@ pip install git+https://github.com/jkminder/nnpatch
 ```python
 import pandas as pd
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from nnsight import NNsight
 from nnpatch import Sites, act_patch, Site
 from nnpatch.api.llama import Llama3
 from nnpatch.api.mistral import Mistral
@@ -31,6 +32,7 @@ import torch
 model = AutoModelForCausalLM.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
 tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
 tokenizer.padding_side = "left"
+nnmodel = NNsight(model)
 
 # Prepare your data 
 # For llama3
