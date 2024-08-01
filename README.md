@@ -23,7 +23,7 @@ pip install git+https://github.com/jkminder/nnpatch
 import pandas as pd
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from nnsight import NNsight
-from nnpatch import Sites, act_patch, Site
+from nnpatch import Sites, activation_patching, attribution_patching, Site
 from nnpatch.api.llama import Llama3
 from nnpatch.api.mistral import Mistral
 import torch
@@ -56,12 +56,13 @@ target_prompts = data.target_prompts.tolist()
 source_prompts = tokenizer(source_prompts, return_tensors="pt", padding=True)
 attention_mask = source_prompts["attention_mask"].to(device)
 source_prompts = source_prompts["input_ids"].to(device)
-target_prompts = tokenizer(target_prompts, return_tensors="pt", padding=True)["input_ids"].to(device)
+target_prompts = tokenizer(target_prompts, return_tensors="pt", padding=True).to(device)
+target_attention_mask = 
 
 site_names = ["resid", "attn", "mlp", "o", "k", "q", "v"]
 
 # Define patch sites and layers
-# We patch on layers 1 to 4, set to None to patch on all layers
+# We patch on layers 1 to 4, set to None to patch on all layers    
 # Patch on each position
 sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="each")
 # Patch on all positions at once
@@ -77,12 +78,12 @@ sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="custom", se
 
 
 # Apply activation patching
-out = act_patch(nnmodel, Llama3, sites, source_prompts, target_prompts, source_answer_index, target_answer_index, attention_mask=attention_mask)
+out = activation_patching(nnmodel, Llama3, sites, source_prompts, target_prompts, source_answer_index, target_answer_index, attention_mask=attention_mask)
 # out: Dict of site_name: tensor representing the logit difference variation for each patch
 ```
 ### A Note on Layer and Sequence Indexing
 You can specify to only patch at specific layers or sequence positions. Check the examples in the code above. If you specify any setting where multiple token positions have to be patched individually (`custom`, `each` or `lastk`), the output from the activation patching
-function `act_patch` will still span the full sequence length of the input and all layers, but only the specified sites are filled in. 
+function `activation_patch` will still span the full sequence length of the input and all layers, but only the specified sites are filled in. 
 
 E.g. if you specify the sites with : `sites = Sites(site_names=site_names, layers=[1,2,3,4], seq_pos_type="custom", seq_pos=[-3,-102])` and your input sequence contains 200 tokens. Your output of a `resid` patch of Llama 3 8b (which has 32 layers) will be of shape `[32, 200]` but only the layers `1,2,3,4` as well as positions `-3` and `-102` will be filled in, the rest of the output matrix is 0. 
 
@@ -93,7 +94,7 @@ E.g. if you specify the sites with : `sites = Sites(site_names=site_names, layer
 ```python
 import pandas as pd
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from nnpatch import Sites, act_patch
+from nnpatch import Sites, activation_patching
 from nnpatch.api.llama import Llama3
 
 # Load your model
@@ -140,6 +141,8 @@ with nnmodel.trace(source_prompts, attention_mask=attention_mask) as invoker:
 with nnmodel.trace(target_prompts, attention_mask=attention_mask) as invoker:
     for site in sites:
         site.patch(nnmodel)
+        # or to patch in zero do (zero requires no previous .cache() call)
+        site.patch(nnmodel, zero=True)
 
 
 ```
