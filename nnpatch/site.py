@@ -30,7 +30,8 @@ class Site:
         self.seq_pos = seq_pos
         
         self._result = None
-
+        self._cache = None
+        self._gradient_cache = None
 
     @abstractmethod
     def cache(self, nnmodel, gradient=False):
@@ -59,6 +60,11 @@ class Site:
     @result.setter
     def result(self, value):    
         self._result = value
+        
+    def reset(self):
+        self._cache = None
+        self._gradient_cache = None
+        self._result = None
     
     def __repr__(self) -> str:
         return f"{self.component_name}({self.layer}, {self.head}, {self.seq_pos})"
@@ -77,6 +83,21 @@ class Site:
             attribution = (clean_site._cache - self._cache) * self._gradient_cache
         self.result = attribution.sum()
         return self.result
+    
+    def average_cache_over_samples(self, nnmodel, other_sites=[]):
+        if self._cache is None:
+            raise ValueError("Cache not found. Please run .cache() before running average_cache_over_samples.")
+        mean = self._cache
+        for site in other_sites:
+            mean = torch.cat([mean, site._cache], dim=0)
+        mean = mean.mean(dim=0)
+        self._cache = mean
+        if self._gradient_cache is not None:
+            mean = self._gradient_cache
+            for site in other_sites:
+                mean = torch.cat([mean, site._gradient_cache], dim=0)
+            mean = mean.mean(dim=0)
+            self._gradient_cache = mean
 
 class HeadSite(Site):
     _cache = defaultdict(lambda: defaultdict(dict))
@@ -90,7 +111,10 @@ class HeadSite(Site):
     def reset():
         HeadSite._cache = defaultdict(lambda: defaultdict(dict))
         HeadSite._gradient_cache = defaultdict(lambda: defaultdict(dict))
-        
+    
+    def reset(self):
+        HeadSite._cache[self.cache_name] = defaultdict(dict)
+        HeadSite._gradient_cache[self.cache_name] = defaultdict(dict)
         
     def cache(self, nnmodel, gradient=False):
         if self.component_name not in HeadSite._cache[self.cache_name][self.layer]:
@@ -108,7 +132,7 @@ class HeadSite(Site):
         if zero:
             cache = 0
         else:
-            clean = HeadSite._cache[self.cache_name][self.layer][self.component_name]
+            clean = self.get_cache()
             clean = hidden_to_head(clean, n_heads) # batch pos head_index d_head
             cache = clean[:, self.seq_pos, self.head]
         dirty = getattr(self.api, f"get_{self.component_name}")(nnmodel, self.layer).output
@@ -125,7 +149,7 @@ class HeadSite(Site):
     def attribution(self, nnmodel, clean_site=None, zero=False):
         self._attribution_args_validation(nnmodel, clean_site, zero)
         n_heads = self.num_heads(nnmodel)
-        
+
         corrupted = hidden_to_head(self.get_cache(), n_heads)[:, self.seq_pos, self.head]
         gradient = hidden_to_head(self.get_gradient_cache(), n_heads)[:, self.seq_pos, self.head]
         if zero:
@@ -136,6 +160,32 @@ class HeadSite(Site):
         self.result = attribution.sum(dim=(1,2)).mean()
         return self.result
     
+    def average_cache_over_samples(self, nnmodel, other_sites=[]):
+        n_heads = self.num_heads(nnmodel)
+        cache = self.get_cache()
+        cache = hidden_to_head(cache, n_heads) # batch pos head_index d_head
+        mean = cache[:, self.seq_pos, self.head]
+        for site in other_sites:
+            assert type(site) == HeadSite, "Only HeadSite is supported for averaging cache over samples."
+            other_cache = hidden_to_head(site.get_cache(), n_heads)
+            other_cache = other_cache[:, self.seq_pos, site.head]
+            mean = torch.cat([mean, other_cache], dim=0)
+        mean = mean.mean(dim=0)
+            
+        cache[:, self.seq_pos, self.head] = mean
+        HeadSite._cache[self.cache_name][self.layer][self.component_name] = head_to_hidden(cache)
+        
+        if self.component_name in HeadSite._gradient_cache[self.cache_name][self.layer]:
+            gradient_cache = self.get_gradient_cache()
+            gradient_cache = hidden_to_head(gradient_cache, n_heads)
+            mean = gradient_cache[:, self.seq_pos, self.head]
+            for site in other_sites:
+                other_cache = hidden_to_head(site.get_gradient_cache(), n_heads)
+                other_cache = other_cache[:, self.seq_pos, site.head]
+                mean = torch.cat([mean, other_cache], dim=0)
+            gradient_cache[:, self.seq_pos, self.head] = mean
+            HeadSite._gradient_cache[self.cache_name][self.layer][self.component_name] = head_to_hidden(gradient_cache)
+
 class MLPSite(Site):
     def __init__(self, api, layer, seq_pos=None):
         super().__init__(api, "mlp", layer, None, seq_pos)
@@ -235,6 +285,19 @@ class MultiSite(Site):
         self.result = sum([site.result for site in self.sites])
         return self.result
 
+    def reset(self):
+        for site in self.sites:
+            site.reset()
+        self.result = None
+        
+    def average_cache_over_samples(self, nnmodel, other_sites=[]):
+        for site in other_sites:
+            assert isinstance(site, MultiSite), "Only MultiSite is supported for other_sites when averaging cache over samples."
+            assert len(site.sites) == len(self.sites), "Other MultiSite should have the same number of sites."
+        for i, site in enumerate(self.sites):
+            site.average_cache_over_samples(nnmodel, [site.sites[i] for site in other_sites])
+            
+            
 class Sites:
     def __init__(
         self, 
@@ -387,3 +450,23 @@ class Sites:
                 out[site_name][*index] = site.result.cpu().detach().float()
 
         return out
+
+
+def batched_average_cache(nnmodel, tokens, attention_mask, site, batch_size, gradient=False):  
+    # Split the tokens and attention mask into batches
+    tokens = tokens.split(batch_size)
+    attention_mask = attention_mask.split(batch_size)
+    
+    n_batches = len(tokens)
+    sites = [deepcopy(site) for i in range(n_batches)]
+    for i, site in enumerate(sites[1:], start=1):
+        if isinstance(site, HeadSite):
+            site.cache_name = f"{site.cache_name}_batch{i}"
+
+    for i, (tokens_batch, attention_mask_batch, site) in enumerate(zip(tokens, attention_mask, sites)):
+        with nnmodel.trace(tokens_batch, attention_mask=attention_mask_batch):
+            site.cache(nnmodel, gradient=gradient)
+            
+    site = sites[0]
+    site.average_cache_over_samples(nnmodel, other_sites=sites[1:])
+    return site
