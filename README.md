@@ -8,7 +8,7 @@ Currently `mlp`, `attn` and `resid` refer to the post block activations.
 There are currently two models supported:
 - Llama3 (tested with `Meta-Llama-3-8B-Instruct`)
 - Mistral (tested with `Mistral-7B-Instruct-v0.1`)
-
+- Gemma 2 (tested with `Gemma-2-9b-it`)
 It is super easy to add new models, check out `nnpatch/api/llama.py` for an example. Please open a pull request, if you added a new model.
 
 # Installation
