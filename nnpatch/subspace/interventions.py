@@ -7,8 +7,9 @@ from lightning import LightningModule, Trainer
 from transformers import get_linear_schedule_with_warmup
 from datasets import Dataset
 from functools import partial
-from pyvene import TrainableIntervention, DistributedRepresentationIntervention
 from nnsight import NNsight
+from huggingface_hub import PyTorchModelHubMixin
+import warnings
 
 from ..api.model_api import ModelAPI
 torch.autograd.set_detect_anomaly(True)
@@ -25,7 +26,7 @@ def convert_statedict_from_pyvene(state_dict):
     return new_state_dict
 
 
-class LowRankOrthogonalProjection(nn.Module):
+class LowRankOrthogonalProjection(nn.Module, PyTorchModelHubMixin):
     def __init__(self, embed_dim, rank=1, orthogonalize=True):
         super().__init__()
         self.weight = nn.Parameter(torch.empty(embed_dim, rank), requires_grad=True)
@@ -72,157 +73,13 @@ class LowRankOrthogonalProjection(nn.Module):
 
     @staticmethod
     def load_pretrained(path):
+        warnings.warn("Loading pretrained projection using load_pretrained() path is deprecated. Use the .from_pretrained() method instead.")
         state_dict = torch.load(path, weights_only=True)
         proj = LowRankOrthogonalProjection(state_dict["embed_dim"].item(), state_dict["rank"].item())
         state_dict.pop("embed_dim")
         state_dict.pop("rank")
         proj.load_state_dict(state_dict)
         return proj
-
-class InterchangeIntervention(TrainableIntervention, DistributedRepresentationIntervention):
-    def __init__(self, projection: LowRankOrthogonalProjection, layer, device=None, last_token_only=True, **kwargs):
-        super().__init__(**kwargs)
-        self.proj = projection
-        self.layer = layer
-        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.last_token_only = last_token_only
-        self.proj.to(self.device)
-        self._activated = False
-        self._source=False
-
-    def forward(self, target, source, subspaces=None):
-        # h_t = (I-P) h_s + P h_t
-        intervened_target = self.proj(source, target)
-        return intervened_target.to(target.dtype)
-
-class SubspaceIntervention(LightningModule):
-    def __init__(self, model: nn.Module, projection: LowRankOrthogonalProjection, api: ModelAPI, layer: int, train_dataset, val_dataset, last_token_only=True, batch_size=32, num_workers=0, lr=1e-3, epochs=10):
-        super().__init__()
-        self.projection = projection
-        self.model = NNsight(model)
-
-        # disable model gradients
-        for param in self.model.parameters():
-            param.requires_grad = False
-        
-        for param in projection.parameters():
-            param.requires_grad = True
-
-        self.train_dataset = train_dataset
-        self.train_dataset = train_dataset
-        self.val_dataset = val_dataset
-        self.last_token_only = last_token_only
-        self.layer = layer
-        self.api = api
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.lr = lr
-        self.epochs = epochs
-    
-    def get_representation(self, value):
-        if self.last_token_only:
-            return value[:, -1, :]
-        else:
-            return value
-
-    def forward(self, target_ids, target_mask, source_ids, source_mask, subspaces=None):
-        # Collect Source and Target representations
-        with self.model.trace(source_ids, attention_mask=source_mask) as tracer:
-            source_representation = self.api.get_layer(self.model, self.layer).output[0].save()
-            self.api.get_layer(self.model, self.layer).output.stop()
-        source_representation = source_representation.value
-        with self.model.trace(target_ids, attention_mask=target_mask) as tracer:
-            target_representation = self.api.get_layer(self.model, self.layer).output[0]
-            if self.last_token_only:
-                self.api.get_layer(self.model, self.layer).output[0][:, -1, :] = self.projection(self.get_representation(source_representation), self.get_representation(target_representation))
-            else:
-                self.api.get_layer(self.model, self.layer).output[0] = self.projection(source_representation, target_representation)
-            output = self.model.output.save()
-        return output.value
-
-    def __str__(self):
-        return f"SubspaceIntervention(model={self.model})"
-
-    def loss(self, output, labels):   
-        last_token_logits = output[:, -1, :]
-        labels = labels.to(last_token_logits.device)
-        loss = F.cross_entropy(last_token_logits, labels)
-        return loss
-
-    def metrics(self, output, source_labels, target_labels):
-        source_accuracy = (output[:, -1, :].argmax(dim=1) == source_labels).float().mean()
-        target_accuracy = (output[:, -1, :].argmax(dim=1) == target_labels).float().mean()
-        return {
-            "source_accuracy": source_accuracy,
-            "target_accuracy": target_accuracy,
-        }
-
-    def training_step(self, batch, batch_idx):
-        target_ids, target_mask, source_ids, source_mask, source_labels, target_labels = batch
-        output = self.forward(target_ids, target_mask, source_ids, source_mask).logits
-        loss = self.loss(output, source_labels)
-        metrics = self.metrics(output, source_labels, target_labels)
-        metrics["loss"] = loss
-        self.log_dict(metrics, prog_bar=True)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        target_ids, target_mask, source_ids, source_mask, source_labels, target_labels = batch
-        output = self.forward(target_ids, target_mask, source_ids, source_mask).logits
-        loss = self.loss(output, source_labels)
-        metrics = self.metrics(output, source_labels, target_labels)
-        self.log_dict(metrics, prog_bar=True)
-        print(loss)
-        return loss
-
-    def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
-
-    def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
-
-    def configure_optimizers(self):
-        params = [param for param in self.projection.parameters() if param.requires_grad]
-        print(params)
-        optimizer = torch.optim.AdamW(params=params, lr=self.lr)
-        # scheduler = get_linear_schedule_with_warmup(
-        #     optimizer, num_warmup_steps=0.1 * t_total, num_training_steps=t_total
-        # )
-        return optimizer
-
-    # def on_before_backward(self, loss):
-    #     print("on before backward")
-    #     print("loss", loss)
-
-    # def on_after_backward(self):
-    #     print("on after backward")
-    #     print("params grad", list(self.projection.parameters())[0][0].grad)
-    #     print("grad", self.projection.weight)
-
-    # def on_before_zero_grad(self, optimizer):
-    #     print("238 after optimizer step", self.projection.weight)
-    #     print("238 after optimizer step grad", self.projection.weight.grad)
-    #     assert not torch.all(self.projection.weight == 0), "Zero weight ZG"
-
-    # def on_train_batch_end(self, batch, batch_idx, dataloader_idx):
-    #     print("on train batch end", self.projection.weight)
-
-
-    def backward(self, loss):
-        loss.backward(retain_graph=True)
-
-    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
-        # Add your custom logic to run directly before `optimizer.step()`
-        print("optimizer step", self.projection.weight)
-        print("grad", self.projection.weight.grad)
-        print("")
-        optimizer.step(closure=optimizer_closure)
-        print("optimizer step done", self.projection.weight)
-        assert not torch.all(self.projection.weight == 0), "Zero weight"
-        
-        
-def create_tensor_dataset(source_tokens, target_tokens, source_label_index, target_label_index, source_attn_mask, target_attn_mask):
-    return TensorDataset(target_tokens, target_attn_mask, source_tokens, source_attn_mask, source_label_index, target_label_index)
 
 def create_dataset(source_tokens, target_tokens, source_label_index, target_label_index, source_attn_mask, target_attn_mask, *args):
     # Create a dataset with the same structure as the original data
@@ -237,18 +94,6 @@ def create_dataset(source_tokens, target_tokens, source_label_index, target_labe
     })
     return dataset
 
-def train_projection_native(model: nn.Module, projection: LowRankOrthogonalProjection, api: ModelAPI, layer: int, train_dataset, val_dataset, batch_size=32, epochs=10, lr=1e-3, num_workers=0, **lightning_trainer_kwargs):
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-    intervention = SubspaceIntervention(model, projection, api, layer, train_dataset, val_dataset, batch_size=batch_size, epochs=epochs, lr=lr, num_workers=num_workers)
-    intervention.train()
-    model.train()
-    # turn off model gradients
-    trainer = Trainer(max_epochs=epochs, num_sanity_val_steps=0, *lightning_trainer_kwargs)
-    print("training")
-    trainer.fit(intervention)
-    trainer.test(intervention)
-    return
 
 def collate_fn(batch):
     out = {}
@@ -309,7 +154,30 @@ def compute_metrics(eval_preds, eval_labels, tokenizer=None, return_target_accur
 
 
 def train_projection(model: nn.Module, projection: LowRankOrthogonalProjection, layer, train_dataset, val_dataset, batch_size=32, epochs=10, lr=1e-3, num_workers=4, device="cuda"):
-    from pyvene import IntervenableConfig, IntervenableModel
+    try:
+        from pyvene import TrainableIntervention, DistributedRepresentationIntervention
+        from pyvene import IntervenableConfig, IntervenableModel
+    except ImportError:
+        raise ImportError("Training a projection is currently still based on pyvene. Please install pyvene with `pip install pyvene` to use this feature.")
+
+    
+    class InterchangeIntervention(TrainableIntervention, DistributedRepresentationIntervention):
+        def __init__(self, projection: LowRankOrthogonalProjection, layer, device=None, last_token_only=True, **kwargs):
+            super().__init__(**kwargs)
+            self.proj = projection
+            self.layer = layer
+            self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.last_token_only = last_token_only
+            self.proj.to(self.device)
+            self._activated = False
+            self._source=False
+
+        def forward(self, target, source, subspaces=None):
+            # h_t = (I-P) h_s + P h_t
+            intervened_target = self.proj(source, target)
+            return intervened_target.to(target.dtype)
+
+
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     intervention_type = "block_output"
     layer = 16

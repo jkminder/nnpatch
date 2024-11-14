@@ -15,5 +15,6 @@ dependencies = [
     'nnsight',
     'loguru',
     'transformers',
+    'huggingface-hub',
 ]
 dynamic = ["version"]
