@@ -17,6 +17,8 @@ pip install git+https://github.com/jkminder/nnpatch
 ```
 
 # Quick Start
+## Subspace Patching
+Please refer to our recent paper (Controllable Context Controllability and the Knob Behind it)[https://arxiv.org/abs/2411.07404] and it's (repository)[https://github.com/kdu4108/context-vs-prior-finetuning] for details.
 
 ## Automated Activation Patching
 ```python
