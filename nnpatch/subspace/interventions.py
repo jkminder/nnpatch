@@ -27,6 +27,11 @@ def convert_statedict_from_pyvene(state_dict):
 
 
 class LowRankOrthogonalProjection(nn.Module, PyTorchModelHubMixin):
+    """
+    A projection that replaces the subspace (spanned by self.weight) value in the target activation with the one in the source activation.
+
+    This is derived from the pyvene library and the implementation for https://arxiv.org/abs/2411.07404.
+    """
     def __init__(self, embed_dim, rank=1, orthogonalize=True):
         super().__init__()
         self.weight = nn.Parameter(torch.empty(embed_dim, rank), requires_grad=True)
@@ -37,18 +42,30 @@ class LowRankOrthogonalProjection(nn.Module, PyTorchModelHubMixin):
         if orthogonalize:
             self = nn.utils.parametrizations.orthogonal(self)
 
-    def forward(self, x):
-        return torch.matmul(x.to(self.weight.dtype), self.weight)
-
     def project(self, x):
+        """
+        Computes the dot product of x and the subspace spanned by self.weight. This results in the value of x in the subspace spanned by self.weight.
+
+        Args:
+            x (torch.Tensor): The vector to project (batch_size, embed_dim)
+
+        Returns:
+            torch.Tensor: The value of x in the subspace spanned by self.weight (batch_size)
+        """
         return torch.matmul(x.to(self.weight.dtype), self.weight)
 
     def get_P(self):
+        """
+        Returns the projection matrix P. This matrix will project any vector onto the subspace spanned by self.weight.
+        """
         if self._P is None or self.training:
             self._P = torch.matmul(self.weight, self.weight.T)
         return self._P
 
     def get_orthogonal_complement(self, P=None):
+        """
+        Returns the projection matrix onto the orthogonal complement of the subspace spanned by self.weight. 
+        """
         # recompute P
         P = self.get_P()
         if self._orthogonal_complement is None or self.training:
@@ -57,15 +74,37 @@ class LowRankOrthogonalProjection(nn.Module, PyTorchModelHubMixin):
         return self._orthogonal_complement
 
     def forward(self, source, target):
+        """
+        Replace the subspace (spanned by self.weight) value in the target activation with the one in the source activation.
+
+        Args:
+            source (torch.Tensor): The source activation (batch_size, seq_len, embed_dim)
+            target (torch.Tensor): The target activation (batch_size, seq_len, embed_dim)
+
+        Returns:
+            torch.Tensor: The modified target activation where the subspace value is replaced by the one from the source activation.
+        """
         P = self.get_P()
         orthogonal_complement = self.get_orthogonal_complement(P)
         # h_t = (I-P) h_t + P h_s
         return torch.matmul(target.to(self.weight.dtype), orthogonal_complement.T) + torch.matmul(source.to(self.weight.dtype), P.T)
 
     def constant_forward(self, source_constant, target):
+        """
+        Replace the subspace (spanned by self.weight) value in the target activation with a constant source value.
+        If you are not training the subspace, make sure to call self.eval() before calling this function. 
+        This will ensure that the projection matrix P is not updated during the forward pass.
+
+        Args:
+            source_constant (torch.Tensor): The constant source value or steering value - called c(w) in the paper (batch_size)
+            target (torch.Tensor): The target activation (batch_size, seq_len, embed_dim)
+
+        Returns:
+            torch.Tensor: The modified target activation where the subspace value is replaced by the constant source value.
+        """
         P = self.get_P()
         orthogonal_complement = self.get_orthogonal_complement(P)
-        # h_t = (I-P) h_t + R s
+        # h_t = (I-P) h_t + P u c(w) 
         return torch.matmul(target.to(self.weight.dtype), orthogonal_complement.T) + torch.matmul(source_constant.to(self.weight.dtype).unsqueeze(1), self.weight.T).squeeze(1)
 
     def __str__(self):
@@ -79,6 +118,27 @@ class LowRankOrthogonalProjection(nn.Module, PyTorchModelHubMixin):
         state_dict.pop("embed_dim")
         state_dict.pop("rank")
         proj.load_state_dict(state_dict)
+        return proj
+
+    @staticmethod
+    def from_subspace_basis(subspace_basis):
+        """
+        Create a projection from a subspace normal basis.
+
+        Args:
+            subspace_basis (torch.Tensor): The subspace basis (embed_dim, rank). Each column is a basis vector with unit norm.
+
+        Returns:
+            LowRankOrthogonalProjection: The projection that projects any vector onto the subspace spanned by subspace_basis.
+        """
+        assert len(subspace_basis.shape) == 2, "Subspace basis must be a 2D tensor of shape (embed_dim, rank)"
+        rank = subspace_basis.shape[1]
+        embed_dim = subspace_basis.shape[0]
+        for basis in range(rank):
+            assert subspace_basis[:, basis].norm() == 1, "Subspace basis must be normalized"
+        proj = LowRankOrthogonalProjection(embed_dim, rank, orthogonalize=False)
+        proj.weight = nn.Parameter(subspace_basis, requires_grad=True)
+        proj = nn.utils.parametrizations.orthogonal(proj)
         return proj
 
 def create_dataset(source_tokens, target_tokens, source_label_index, target_label_index, source_attn_mask, target_attn_mask, *args):
