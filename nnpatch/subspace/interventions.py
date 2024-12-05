@@ -240,7 +240,6 @@ def train_projection(model: nn.Module, projection: LowRankOrthogonalProjection, 
 
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     intervention_type = "block_output"
-    layer = 16
 
     config = IntervenableConfig([
         {
