@@ -223,23 +223,22 @@ class ResidSite(Site):
 
     def cache(self, nnmodel, gradient=False):
         proxy = self.api.get_layer(nnmodel, self.layer).output[0]
-        self._cache = proxy[:, self.seq_pos, :].detach().cpu().save()
+        self._cache = proxy[:, int(self.seq_pos), :].detach().cpu().save()
         if gradient:
-            self._gradient_cache = proxy.grad[:, self.seq_pos, :].cpu().save()
+            self._gradient_cache = proxy.grad[:, int(self.seq_pos), :].cpu().save()
 
     def value(self):
         self._cache = self._cache.value
         self._gradient_cache = self._gradient_cache.value
 
-    def patch(self, nnmodel, zero=False):
-
+    def patch(self, nnmodel, src_site=None, zero=False):
         dirty = self.api.get_layer(nnmodel, self.layer)
         dirty_output = dirty.output[0]
         if zero:
-            dirty_output[:, self.seq_pos, :] = 0
+            dirty_output[:, int(self.seq_pos), :] = 0
         else:
-            dirty_output[:, self.seq_pos, :] = self._cache
-        dirty.output = (dirty_output, dirty.output[1])
+            dirty_output[:, int(self.seq_pos), :] = self._cache if src_site is None else src_site._cache
+        dirty.output = (dirty_output,) + dirty.output[1:]
 
 
 class AttnSite(Site):
@@ -263,17 +262,17 @@ class AttnSite(Site):
 
 
 class MultiSite(Site):
-    def __init__(self, sites: List[Site]):
+    def __init__(self, sites: Dict[Site, Site]):
         layer = []
         head = []
         seq_pos = []
         self.component_names = []
-        for site in sites:
-            layer.append(site.layer)
-            if site.head is not None:
-                head.append(site.head)
-            seq_pos.extend(site.seq_pos.tolist())
-            self.component_names.append(site.component_name)
+        for tgt_site, src_site in sites.items():
+            layer.append(tgt_site.layer)
+            if tgt_site.head is not None:
+                head.append(tgt_site.head)
+            seq_pos.extend([tgt_site.seq_pos] if isinstance(tgt_site.seq_pos, int) else tgt_site.seq_pos.tolist())
+            self.component_names.append(tgt_site.component_name)
 
         self.component_names = tuple(set(self.component_names))
         self.component_name = f"MultiSite({self.component_names})"
@@ -288,12 +287,14 @@ class MultiSite(Site):
         self.sites = sites
 
     def cache(self, nnmodel, gradient=False):
-        for site in self.sites:
-            site.cache(nnmodel, gradient)
+        for _, src_site in self.sites.items():
+            src_site.cache(nnmodel, gradient)
 
-    def patch(self, nnmodel, zero=False):
-        for site in self.sites:
-            site.patch(nnmodel, zero)
+    def patch(self, nnmodel, src_site, zero=False):
+        if src_site is not None:
+            raise ValueError("src_multi_site must be None for MultiSite patching.")
+        for tgt_site, src_subsite in self.sites.items():
+            tgt_site.patch(nnmodel, src_subsite, zero)
 
     def attribution(self, nnmodel, clean_site=None, zero=False):
         for site in self.sites:
@@ -444,7 +445,23 @@ class Sites:
 
         for site_name, shape_names in self.shape_names.items():
             self.sites_dict[site_name] = [
-                Site.get_site(api, site_name, layer, head, seq_pos, cache_name)
+                {
+                    Site.get_site(
+                        api, 
+                        site_name, 
+                        layer, 
+                        head, 
+                        seq_pos, 
+                        cache_name
+                    ): Site.get_site(
+                        api, 
+                        site_name, 
+                        layer, 
+                        head,
+                        seq_pos, 
+                        cache_name
+                    )
+                }
                 for layer, head, seq_pos in self.iter(site_name, shape_names, self.shape_values_all, seq_pos_indices)
             ]
 
