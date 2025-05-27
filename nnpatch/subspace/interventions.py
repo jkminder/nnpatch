@@ -218,7 +218,7 @@ def train_projection(model: nn.Module, projection: LowRankOrthogonalProjection, 
         from pyvene import TrainableIntervention, DistributedRepresentationIntervention
         from pyvene import IntervenableConfig, IntervenableModel
     except ImportError:
-        raise ImportError("Training a projection is currently still based on pyvene. Please install pyvene with `pip install pyvene` to use this feature.")
+        raise ImportError("Training a projection is currently still based on pyvene. Please install our custom pyvene with `pip install git+https://github.com/jkminder/pyvene` to use this feature.")
 
     
     class InterchangeIntervention(TrainableIntervention, DistributedRepresentationIntervention):
@@ -264,14 +264,18 @@ def train_projection(model: nn.Module, projection: LowRankOrthogonalProjection, 
     
     print("Training")
     print("Train dataset size", len(train_dataloader))
-    intervenable.train_alignment(
-        train_dataloader=train_dataloader,
-        compute_loss=compute_loss,
-        compute_metrics=partial(compute_metrics, verbose=False),
-        inputs_collator=partial(inputs_collator, device=device),
-        epochs=epochs,
-        lr=lr
-    )
+    try:
+        intervenable.train_alignment(
+            train_dataloader=train_dataloader,
+            compute_loss=compute_loss,
+            compute_metrics=partial(compute_metrics, verbose=False),
+            inputs_collator=partial(inputs_collator, device=device),
+            epochs=epochs,
+            lr=lr
+        )
+    except KeyError as e:
+        print("This error is likely due to a small modification we implemented in pyvene. Have you installed our custom modification to pyvene? Please install it with `pip install git+https://github.com/jkminder/pyvene")
+        raise e
 
     print("Validation")
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
