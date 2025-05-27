@@ -254,14 +254,15 @@ def train_projection(model: nn.Module, projection: LowRankOrthogonalProjection, 
     intervenable.disable_model_gradients()
     key = list(intervenable.interventions.keys())[0]
     try:
-        intervenable.set_device(device)
+        intervenable.set_device(device, set_model=False)
     except Exception as e:
+        print(e)
         # TO DEVICE for 4bit
         intervenable.interventions[key][0].to(device)
-        intervenable.interventions[key][0].rotate_layer.to(device)
-
+        intervenable.interventions[key][0].proj.to(device)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
 
+    
     print("Training")
     print("Train dataset size", len(train_dataloader))
     intervenable.train_alignment(
@@ -283,5 +284,5 @@ def train_projection(model: nn.Module, projection: LowRankOrthogonalProjection, 
     )
     print("Validation metrics", metrics)
 
-    proj = intervenable.interventions[key][0]
+    proj = intervenable.interventions[key][0].proj
     return proj
